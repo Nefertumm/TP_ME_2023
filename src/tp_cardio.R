@@ -7,6 +7,7 @@ library("dplyr")
 library("fastDummies")
 library("pROC")
 library("caret")
+library("e1071")
 library("naivebayes")
 library("ggplot2")
 library("ggpubr")
@@ -135,51 +136,100 @@ dataset.dummies <- fastDummies::dummy_cols(dataset_limpio,
                               remove_selected_columns = T)
 
 # Control para k-fold cv
-trControl <- caret::trainControl(method = "cv",
-                          number = 5)
-# Modelo de Naive-Bayes
-modelo.nb <- caret::train(cardio ~ .,
-                          method    = "naive_bayes",
-                          trControl = trControl,
-                          metric    = "Accuracy",
-                          data      = dataset.dummies)
-
-modelo.nb.pred <- predict(modelo.nb,
-                          type = "prob")
-
-modelo.nb.pred.corregido <- ifelse(modelo.nb.pred > 0.5, 1, 0)
-
-auc.nb <- auc(dataset.dummies$cardio, modelo.nb.pred.corregido[,2])
+# trControl <- caret::trainControl(method = "cv",
+#                           number = 10)
+# # Modelo de Naive-Bayes
+# modelo.nb <- caret::train(cardio ~ .,
+#                           method    = "naive_bayes",
+#                           trControl = trControl,
+#                           metric    = "Accuracy",
+#                           data      = dataset.dummies)
+# 
+# modelo.nb.pred <- predict(modelo.nb, newdata = dataset.dummies,
+#                           type = "prob")
+# 
+# modelo.nb.pred.corregido <- ifelse(modelo.nb.pred > 0.5, 1, 0)
+# 
+# auc.nb <- auc(dataset.dummies$cardio, modelo.nb.pred.corregido[,2])
 
 #conf.mat.nb <- caret::confusionMatrix(modelo.nb.pred.corregido, dataset_limpio$cardio)
 
 # Modelo de Regresión Logística
-modelo.glm <- caret::train(cardio ~ .,
-                           method    = "glm",
+# modelo.glm <- caret::train(cardio ~ .,
+#                            method    = "glm",
+#                            trControl = trControl,
+#                            metric    = "Accuracy",
+#                            data      = dataset.dummies)
+# 
+# modelo.glm.pred <- predict(modelo.glm,
+#                            type = "prob")
+# 
+# # Esto se tiene que hacer siempre que sean probabilidades?
+# modelo.glm.pred.corregido <- ifelse(modelo.glm.pred > 0.5, 1, 0)
+# 
+# auc.glm <- auc(dataset.dummies$cardio, modelo.glm.pred.corregido[,2])
+
+## conf.mat.nb <- caret::confusionMatrix(modelo.glm.pred, as.factor(dataset.dummies$cardio))
+
+# caret::confusionMatrix(data=factor(modelo.nb.pred.corregido), reference= factor(dataset.dummies$cardio))
+
+
+## USAMOS EL PAQUETE E1071
+
+# Control 10-fold cv (e1071)
+# trControl <- e1071::tune.control(sampling = "cross",
+#                                  cross = 10)
+# # Modelo de Naive-Bayes
+# modelo.nb <- e1071::tune(METHOD = "naiveBayes",
+#                          train.x = cardio ~ .,
+#                          data = dataset.dummies,
+#                          tunecontrol = trControl)
+# 
+# modelo.nb.pred <- predict(modelo.nb$best.model, newdata = dataset.dummies)
+
+# Control 10-fold cv (caret)
+trControl <- caret::trainControl(method = "cv", 
+                          number = 10)
+
+# CARET
+modelo.nb <- caret::train(cardio ~ .,
+                           method = "naive_bayes",
                            trControl = trControl,
-                           metric    = "Accuracy",
-                           data      = dataset.dummies)
+                           metric = "Accuracy",
+                           data = dataset.dummies)
 
-modelo.glm.pred <- predict(modelo.glm,
-                           type = "prob")
+modelo.nb.pred <- predict(modelo.nb, newdata = dataset.dummies)
 
-# Esto se tiene que hacer siempre que sean probabilidades?
-modelo.glm.pred.corregido <- ifelse(modelo.glm.pred > 0.5, 1, 0)
+# Modelo de Regresión Logística
+modelo.glm <- caret::train(cardio ~ .,
+                         method = "glm",
+                         family = "binomial",
+                         trControl = trControl,
+                         metric = "Accuracy",
+                         data = dataset.dummies)
 
-auc.glm <- auc(dataset.dummies$cardio, modelo.glm.pred.corregido[,2])
+modelo.glm.pred <- predict(modelo.glm, newdata = dataset.dummies)
 
-#conf.mat.nb <- caret::confusionMatrix(modelo.glm.pred, as.factor(dataset.dummies$cardio))
+# Curvas ROC, AUC y matriz de confusión para cada modelo
 
-# Curvas roc
-roc_modelo_nb <- roc(dataset.dummies$cardio, modelo.nb.pred.corregido[,2])
-roc_modelo_glm <- roc(dataset.dummies$cardio, modelo.glm.pred.corregido[,2])
+mat.conf.nb <- caret::confusionMatrix(modelo.nb.pred, dataset.dummies$cardio)
+mat.conf.glm <- caret::confusionMatrix(modelo.glm.pred, dataset.dummies$cardio)
 
-plot(roc_modelo_nb, col = "green3", main = "Curvas ROC", xlab = "Specificity", ylab = "Sensitivity")
-lines(roc_modelo_glm, col = "red3")
+roc.nb <- roc(response = dataset.dummies$cardio, predictor=as.numeric(modelo.nb.pred))
+roc.glm <- roc(response = dataset.dummies$cardio, predictor=as.numeric(modelo.glm.pred))
 
-legend("bottomright", legend = c("Modelo Naive-Bayes", "Modelo Regresión Logística"), col = c("green3", "red3"), lty = 1)
+auc.nb <- auc(roc.nb)
+auc.glm <- auc(roc.glm)
 
-ggsave("./output/curvas_roc.png", plot = last_plot(), width = 6, height = 4, dpi = 600)
+plot_roc <- ggroc(list("Modelo Naive-Bayes"=roc.nb, "Modelo Regresion Logística"=roc.glm)) +
+  labs(title = "Curvas ROC", x = "1 - Specificidad", y = "Sensibilidad") +
+  scale_color_manual(values = c("green3", "red3")) +
+  guides(color = guide_legend(title = "Modelos")) +
+  theme(legend.title = element_text(size = 8), legend.text = element_text(size = 6))
+
+ggsave("./output/curvas_roc.png", plot = plot_roc, width = 6, height = 4, dpi = 600)
 
 cat("Valores AUC:\n", "Modelo Naive-Bayes: ", round(auc.nb, 4), " \n",
                                "Modelo Regresión Logística: ", round(auc.glm, 4))
+
+
